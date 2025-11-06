@@ -1,0 +1,3 @@
+# Python SQLite3 is built-in, but we might want additional tools
+# No external dependencies required for basic SQLite benchmarking
+

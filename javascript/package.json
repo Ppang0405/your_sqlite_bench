@@ -1,0 +1,17 @@
+{
+  "name": "sqlite-bench-js",
+  "version": "1.0.0",
+  "description": "SQLite benchmark for Node.js",
+  "main": "benchmark.js",
+  "type": "module",
+  "scripts": {
+    "start": "node benchmark.js"
+  },
+  "keywords": ["sqlite", "benchmark"],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "better-sqlite3": "^9.2.2"
+  }
+}
+
