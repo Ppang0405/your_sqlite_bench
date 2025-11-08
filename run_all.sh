@@ -4,10 +4,20 @@
 
 set -e
 
-echo "=============================================="
-echo "  SQLite Performance Benchmark Suite"
-echo "=============================================="
-echo ""
+# Parse command line arguments
+CUSTOM_QUERIES_ONLY=false
+if [ "$1" = "--custom-queries" ]; then
+    CUSTOM_QUERIES_ONLY=true
+    echo "=============================================="
+    echo "  SQLite Custom Queries Benchmark"
+    echo "=============================================="
+    echo ""
+else
+    echo "=============================================="
+    echo "  SQLite Performance Benchmark Suite"
+    echo "=============================================="
+    echo ""
+fi
 
 # Colors for output
 RED='\033[0;31m'
@@ -43,7 +53,11 @@ run_rust() {
                 return 1
             fi
         fi
-        cargo run --release --quiet 2>&1 | add_timestamp
+        if [ "$CUSTOM_QUERIES_ONLY" = true ]; then
+            cargo run --release --quiet -- --custom-queries 2>&1 | add_timestamp
+        else
+            cargo run --release --quiet 2>&1 | add_timestamp
+        fi
         cd ..
         echo ""
     else
@@ -67,7 +81,11 @@ run_go() {
                 return 1
             fi
         fi
-        go run main.go 2>&1 | add_timestamp
+        if [ "$CUSTOM_QUERIES_ONLY" = true ]; then
+            go run main.go --custom-queries 2>&1 | add_timestamp
+        else
+            go run main.go 2>&1 | add_timestamp
+        fi
         cd ..
         echo ""
     else
@@ -82,12 +100,20 @@ run_python() {
     echo ""
     if command_exists python3; then
         cd python
-        python3 benchmark.py 2>&1 | add_timestamp
+        if [ "$CUSTOM_QUERIES_ONLY" = true ]; then
+            python3 benchmark.py --custom-queries 2>&1 | add_timestamp
+        else
+            python3 benchmark.py 2>&1 | add_timestamp
+        fi
         cd ..
         echo ""
     elif command_exists python; then
         cd python
-        python benchmark.py 2>&1 | add_timestamp
+        if [ "$CUSTOM_QUERIES_ONLY" = true ]; then
+            python benchmark.py --custom-queries 2>&1 | add_timestamp
+        else
+            python benchmark.py 2>&1 | add_timestamp
+        fi
         cd ..
         echo ""
     else
@@ -111,7 +137,11 @@ run_javascript() {
                 return 1
             fi
         fi
-        node benchmark.js 2>&1 | add_timestamp
+        if [ "$CUSTOM_QUERIES_ONLY" = true ]; then
+            node benchmark.js --custom-queries 2>&1 | add_timestamp
+        else
+            node benchmark.js 2>&1 | add_timestamp
+        fi
         cd ..
         echo ""
     else

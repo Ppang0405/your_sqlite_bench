@@ -192,18 +192,17 @@ func benchmarkBatchDelete(db *sql.DB, count int) (int64, error) {
 	return time.Since(start).Milliseconds(), nil
 }
 
-// benchmarkCustomQuery performs custom complex query on existing database (1000 iterations)
-// Uses random LIMIT, OFFSET, and release_date values for realistic testing
+// benchmarkCustomQuery performs custom queries benchmark on existing database
+// Tests 3 different query patterns: index page, DVD detail, and DVD relationships
 func benchmarkCustomQuery(dbPath string, iterations int) (int64, error) {
-	start := time.Now()
-
 	db, err := sql.Open("sqlite3", dbPath+"?mode=ro")
 	if err != nil {
 		return 0, err
 	}
 	defer db.Close()
 
-	queryTemplate := `
+	// Query 1: Index page query (listing with filters)
+	indexQuery := `
 		SELECT DISTINCT derived_video.dvd_id, derived_video.jacket_full_url, derived_video.release_date 
 		FROM derived_video 
 		LEFT OUTER JOIN derived_video_actress ON derived_video_actress.content_id = derived_video.content_id 
@@ -225,46 +224,211 @@ func benchmarkCustomQuery(dbPath string, iterations int) (int64, error) {
 		LIMIT ? OFFSET ?
 	`
 
-	var totalRows int
-	for i := 0; i < iterations; i++ {
-		// Generate random parameters
-		randomYear := 2020 + (i % 6)                                  // 2020-2025
-		randomMonth := 1 + (i*7 % 12)                                 // 1-12
-		randomDay := 1 + (i*11 % 28)                                  // 1-28
-		randomDate := fmt.Sprintf("%d-%02d-%02d", randomYear, randomMonth, randomDay)
-		randomLimit := 50 + (i*13 % 150)  // 50-199
-		randomOffset := (i * 37) % 5000   // 0-4999
+	// Query 2: DVD detail page query
+	detailQuery := `
+		SELECT derived_video.content_id, derived_video.dvd_id, derived_video.title_en, derived_video.title_ja, 
+		       derived_video.comment_en, derived_video.comment_ja, derived_video.runtime_mins, derived_video.release_date, 
+		       derived_video.sample_url, derived_video.maker_id, derived_video.label_id, derived_video.series_id, 
+		       derived_video.jacket_full_url, derived_video.jacket_thumb_url, derived_video.gallery_full_first, 
+		       derived_video.gallery_full_last, derived_video.gallery_thumb_first, derived_video.gallery_thumb_last, 
+		       derived_video.site_id, derived_video.service_code 
+		FROM derived_video 
+		WHERE derived_video.dvd_id IS NOT NULL 
+		AND derived_video.dvd_id IS NOT '' 
+		AND derived_video.release_date IS NOT NULL 
+		AND derived_video.dvd_id = ?
+	`
 
-		rows, err := db.Query(queryTemplate, randomDate, randomLimit, randomOffset)
+	// Query 3: DVD relationships query (categories and actresses)
+	relationshipsQuery := `
+		SELECT derived_video.content_id, derived_category.id AS cat_id, derived_category.name_en AS cat_name_en, 
+		       derived_category.name_ja AS cat_name_ja, derived_actress.id AS act_id, derived_actress.name_romaji, 
+		       derived_actress.name_kana, derived_actress.name_kanji, derived_actress.image_url AS act_image_url 
+		FROM derived_video 
+		LEFT OUTER JOIN derived_video_category ON derived_video_category.content_id = derived_video.content_id 
+		LEFT OUTER JOIN derived_category ON derived_category.id = derived_video_category.category_id 
+		LEFT OUTER JOIN derived_video_actress ON derived_video_actress.content_id = derived_video.content_id 
+		LEFT OUTER JOIN derived_actress ON derived_actress.id = derived_video_actress.actress_id 
+		WHERE derived_video.dvd_id = ?
+	`
+
+	// Query 4: Similar DVDs (same year, random order)
+	similarQuery := `
+		SELECT derived_video.dvd_id, derived_video.jacket_full_url, derived_video.release_date 
+		FROM derived_video, (SELECT derived_video.release_date AS release_date 
+		                     FROM derived_video 
+		                     WHERE derived_video.dvd_id = ?) AS anon_1 
+		WHERE CAST(STRFTIME('%Y', derived_video.release_date) AS INTEGER) = CAST(STRFTIME('%Y', anon_1.release_date) AS INTEGER) 
+		AND derived_video.dvd_id IS NOT NULL 
+		AND derived_video.dvd_id != '' 
+		AND derived_video.release_date IS NOT NULL 
+		AND derived_video.jacket_full_url IS NOT NULL 
+		ORDER BY random() 
+		LIMIT 6 OFFSET 0
+	`
+
+	// Prepare statements once before the loop
+	stmt1, err := db.Prepare(indexQuery)
+	if err != nil {
+		return 0, err
+	}
+	defer stmt1.Close()
+
+	stmt2, err := db.Prepare(detailQuery)
+	if err != nil {
+		return 0, err
+	}
+	defer stmt2.Close()
+
+	stmt3, err := db.Prepare(relationshipsQuery)
+	if err != nil {
+		return 0, err
+	}
+	defer stmt3.Close()
+
+	stmt4, err := db.Prepare(similarQuery)
+	if err != nil {
+		return 0, err
+	}
+	defer stmt4.Close()
+
+	start := time.Now()
+
+	var totalRows1, totalRows2, totalRows3, totalRows4 int
+
+	for i := 0; i < iterations; i++ {
+		// Query 1: Index page with random parameters
+		randomYear := 2020 + (i % 6)
+		randomMonth := 1 + (i*7 % 12)
+		randomDay := 1 + (i*11 % 28)
+		randomDate := fmt.Sprintf("%d-%02d-%02d", randomYear, randomMonth, randomDay)
+		pageNumber := (i * 13) % 50 // Random page 0-49
+		limit := 100
+		offset := pageNumber * 100
+
+		rows1, err := stmt1.Query(randomDate, limit, offset)
 		if err != nil {
 			return 0, err
 		}
 
-		count := 0
-		for rows.Next() {
+		// Collect Query 1 results
+		var query1Results []string
+		for rows1.Next() {
 			var dvdID, jacketURL, releaseDate sql.NullString
-			if err := rows.Scan(&dvdID, &jacketURL, &releaseDate); err != nil {
-				rows.Close()
+			if err := rows1.Scan(&dvdID, &jacketURL, &releaseDate); err != nil {
+				rows1.Close()
 				return 0, err
 			}
-			count++
+			if dvdID.Valid {
+				query1Results = append(query1Results, dvdID.String)
+			}
 		}
-		rows.Close()
+		rows1.Close()
+		totalRows1 += len(query1Results)
 
-		if err := rows.Err(); err != nil {
+		// Query 2, 3, 4: Use a random dvd_id from Query 1 results
+		if len(query1Results) == 0 {
+			continue
+		}
+		randomDvdID := query1Results[i%len(query1Results)]
+
+		rows2, err := stmt2.Query(randomDvdID)
+		if err != nil {
 			return 0, err
 		}
-		totalRows += count
+
+		count2 := 0
+		for rows2.Next() {
+			var contentID, dvdID, titleEN, titleJA, commentEN, commentJA sql.NullString
+			var runtimeMins, makerID, labelID, seriesID, siteID sql.NullInt64
+			var releaseDate, sampleURL, jacketFullURL, jacketThumbURL sql.NullString
+			var galleryFullFirst, galleryFullLast, galleryThumbFirst, galleryThumbLast sql.NullString
+			var serviceCode sql.NullString
+
+			if err := rows2.Scan(&contentID, &dvdID, &titleEN, &titleJA, &commentEN, &commentJA,
+				&runtimeMins, &releaseDate, &sampleURL, &makerID, &labelID, &seriesID,
+				&jacketFullURL, &jacketThumbURL, &galleryFullFirst, &galleryFullLast,
+				&galleryThumbFirst, &galleryThumbLast, &siteID, &serviceCode); err != nil {
+				rows2.Close()
+				return 0, err
+			}
+			count2++
+		}
+		rows2.Close()
+		totalRows2 += count2
+
+		rows3, err := stmt3.Query(randomDvdID)
+		if err != nil {
+			return 0, err
+		}
+
+		count3 := 0
+		for rows3.Next() {
+			var contentID, catID, catNameEN, catNameJA, actID, nameRomaji, nameKana, nameKanji, actImageURL sql.NullString
+			if err := rows3.Scan(&contentID, &catID, &catNameEN, &catNameJA, &actID,
+				&nameRomaji, &nameKana, &nameKanji, &actImageURL); err != nil {
+				rows3.Close()
+				return 0, err
+			}
+			count3++
+		}
+		rows3.Close()
+		totalRows3 += count3
+
+		rows4, err := stmt4.Query(randomDvdID)
+		if err != nil {
+			return 0, err
+		}
+
+		count4 := 0
+		for rows4.Next() {
+			var dvdID, jacketURL, releaseDate sql.NullString
+			if err := rows4.Scan(&dvdID, &jacketURL, &releaseDate); err != nil {
+				rows4.Close()
+				return 0, err
+			}
+			count4++
+		}
+		rows4.Close()
+		totalRows4 += count4
 	}
 
 	duration := time.Since(start).Milliseconds()
-	avgRows := totalRows / iterations
-	fmt.Printf("  → Executed %d times, avg %d rows per query\n", iterations, avgRows)
+
+	fmt.Printf("  → Query 1 (Index): %d iterations, avg %d rows\n", iterations, totalRows1/iterations)
+	fmt.Printf("  → Query 2 (Detail): %d iterations, avg %d rows\n", iterations, totalRows2/iterations)
+	fmt.Printf("  → Query 3 (Relations): %d iterations, avg %d rows\n", iterations, totalRows3/iterations)
+	fmt.Printf("  → Query 4 (Similar): %d iterations, avg %d rows\n", iterations, totalRows4/iterations)
 
 	return duration, nil
 }
 
 func main() {
+	// Check for --custom-queries flag
+	customQueriesOnly := len(os.Args) > 1 && os.Args[1] == "--custom-queries"
+
+	if customQueriesOnly {
+		fmt.Println("=== Go SQLite Benchmark - Custom Queries Only ===\n")
+
+		totalStart := time.Now()
+
+		// Custom Queries Benchmark on existing database
+		fmt.Println("Custom Queries (4 queries × 10 iterations on r18_25_11_04.sqlite)... ")
+		customQueryTime, err := benchmarkCustomQuery("../r18_25_11_04.sqlite", 10)
+		if err != nil {
+			log.Fatal(err)
+		}
+		fmt.Printf("   Total: %dms\n", customQueryTime)
+
+		totalTime := time.Since(totalStart).Milliseconds()
+
+		fmt.Println("\n=== Results ===")
+		fmt.Printf("Custom Query:    %8dms\n", customQueryTime)
+		fmt.Println("─────────────────────────")
+		fmt.Printf("Total Time:      %8dms\n", totalTime)
+		return
+	}
+
 	fmt.Println("=== Go SQLite Benchmark ===\n")
 
 	// Remove old database file if exists
@@ -330,13 +494,13 @@ func main() {
 	}
 	fmt.Printf("%dms\n", batchDeleteTime)
 
-	// Custom Query Benchmark on existing database
-	fmt.Println("\n7. Custom Query (10 iterations on r18_25_11_04.sqlite)... ")
+	// Custom Queries Benchmark on existing database
+	fmt.Println("\n7. Custom Queries (4 queries × 10 iterations on r18_25_11_04.sqlite)... ")
 	customQueryTime, err := benchmarkCustomQuery("../r18_25_11_04.sqlite", 10)
 	if err != nil {
 		log.Fatal(err)
 	}
-	fmt.Printf("   %dms\n", customQueryTime)
+	fmt.Printf("   Total: %dms\n", customQueryTime)
 
 	totalTime := time.Since(totalStart).Milliseconds()
 

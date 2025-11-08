@@ -144,15 +144,14 @@ function benchmarkBatchDelete(db, count) {
 }
 
 /**
- * Performs custom complex query benchmark on existing database (1000 iterations)
- * Uses random LIMIT, OFFSET, and release_date values for realistic testing
+ * Performs custom queries benchmark on existing database
+ * Tests 3 different query patterns: index page, DVD detail, and DVD relationships
  */
 function benchmarkCustomQuery(dbPath, iterations) {
-  const start = Date.now();
-  
   const db = new Database(dbPath, { readonly: true });
   
-  const queryTemplate = `
+  // Query 1: Index page query (listing with filters)
+  const indexQuery = `
     SELECT DISTINCT derived_video.dvd_id, derived_video.jacket_full_url, derived_video.release_date 
     FROM derived_video 
     LEFT OUTER JOIN derived_video_actress ON derived_video_actress.content_id = derived_video.content_id 
@@ -174,32 +173,121 @@ function benchmarkCustomQuery(dbPath, iterations) {
     LIMIT ? OFFSET ?
   `;
   
-  const stmt = db.prepare(queryTemplate);
+  // Query 2: DVD detail page query
+  const detailQuery = `
+    SELECT derived_video.content_id, derived_video.dvd_id, derived_video.title_en, derived_video.title_ja, 
+           derived_video.comment_en, derived_video.comment_ja, derived_video.runtime_mins, derived_video.release_date, 
+           derived_video.sample_url, derived_video.maker_id, derived_video.label_id, derived_video.series_id, 
+           derived_video.jacket_full_url, derived_video.jacket_thumb_url, derived_video.gallery_full_first, 
+           derived_video.gallery_full_last, derived_video.gallery_thumb_first, derived_video.gallery_thumb_last, 
+           derived_video.site_id, derived_video.service_code 
+    FROM derived_video 
+    WHERE derived_video.dvd_id IS NOT NULL 
+    AND derived_video.dvd_id != '' 
+    AND derived_video.release_date IS NOT NULL 
+    AND derived_video.dvd_id = ?
+  `;
   
-  let totalRows = 0;
+  // Query 3: DVD relationships query (categories and actresses)
+  const relationshipsQuery = `
+    SELECT derived_video.content_id, derived_category.id AS cat_id, derived_category.name_en AS cat_name_en, 
+           derived_category.name_ja AS cat_name_ja, derived_actress.id AS act_id, derived_actress.name_romaji, 
+           derived_actress.name_kana, derived_actress.name_kanji, derived_actress.image_url AS act_image_url 
+    FROM derived_video 
+    LEFT OUTER JOIN derived_video_category ON derived_video_category.content_id = derived_video.content_id 
+    LEFT OUTER JOIN derived_category ON derived_category.id = derived_video_category.category_id 
+    LEFT OUTER JOIN derived_video_actress ON derived_video_actress.content_id = derived_video.content_id 
+    LEFT OUTER JOIN derived_actress ON derived_actress.id = derived_video_actress.actress_id 
+    WHERE derived_video.dvd_id = ?
+  `;
+  
+  // Query 4: Similar DVDs (same year, random order)
+  const similarQuery = `
+    SELECT derived_video.dvd_id, derived_video.jacket_full_url, derived_video.release_date 
+    FROM derived_video, (SELECT derived_video.release_date AS release_date 
+                         FROM derived_video 
+                         WHERE derived_video.dvd_id = ?) AS anon_1 
+    WHERE CAST(STRFTIME('%Y', derived_video.release_date) AS INTEGER) = CAST(STRFTIME('%Y', anon_1.release_date) AS INTEGER) 
+    AND derived_video.dvd_id IS NOT NULL 
+    AND derived_video.dvd_id != '' 
+    AND derived_video.release_date IS NOT NULL 
+    AND derived_video.jacket_full_url IS NOT NULL 
+    ORDER BY random() 
+    LIMIT 6 OFFSET 0
+  `;
+  
+  const stmt1 = db.prepare(indexQuery);
+  const stmt2 = db.prepare(detailQuery);
+  const stmt3 = db.prepare(relationshipsQuery);
+  const stmt4 = db.prepare(similarQuery);
+  
+  const start = Date.now();
+  
+  let totalRows1 = 0, totalRows2 = 0, totalRows3 = 0, totalRows4 = 0;
+  
   for (let i = 0; i < iterations; i++) {
-    // Generate random parameters
-    const randomYear = 2020 + Math.floor(Math.random() * 6); // 2020-2025
+    // Query 1: Index page with random parameters
+    const randomYear = 2020 + Math.floor(Math.random() * 6);
     const randomMonth = 1 + Math.floor(Math.random() * 12);
     const randomDay = 1 + Math.floor(Math.random() * 28);
     const randomDate = `${randomYear}-${String(randomMonth).padStart(2, '0')}-${String(randomDay).padStart(2, '0')}`;
-    const randomLimit = 50 + Math.floor(Math.random() * 150); // 50-199
-    const randomOffset = Math.floor(Math.random() * 5000); // 0-4999
+    const pageNumber = Math.floor(Math.random() * 50); // Random page 0-49
+    const limit = 100;
+    const offset = pageNumber * 100;
     
-    const rows = stmt.all(randomDate, randomLimit, randomOffset);
-    totalRows += rows.length;
+    const rows1 = stmt1.all(randomDate, limit, offset);
+    totalRows1 += rows1.length;
+    
+    // Query 2, 3, 4: Use a random dvd_id from Query 1 results
+    if (rows1.length > 0) {
+      const randomDvdId = rows1[Math.floor(Math.random() * rows1.length)].dvd_id;
+      
+      const rows2 = stmt2.all(randomDvdId);
+      totalRows2 += rows2.length;
+      
+      const rows3 = stmt3.all(randomDvdId);
+      totalRows3 += rows3.length;
+      
+      const rows4 = stmt4.all(randomDvdId);
+      totalRows4 += rows4.length;
+    }
   }
+  
+  const duration = Date.now() - start;
   
   db.close();
   
-  const duration = Date.now() - start;
-  const avgRows = Math.floor(totalRows / iterations);
-  console.log(`  → Executed ${iterations} times, avg ${avgRows} rows per query`);
+  console.log(`  → Query 1 (Index): ${iterations} iterations, avg ${Math.floor(totalRows1 / iterations)} rows`);
+  console.log(`  → Query 2 (Detail): ${iterations} iterations, avg ${Math.floor(totalRows2 / iterations)} rows`);
+  console.log(`  → Query 3 (Relations): ${iterations} iterations, avg ${Math.floor(totalRows3 / iterations)} rows`);
+  console.log(`  → Query 4 (Similar): ${iterations} iterations, avg ${Math.floor(totalRows4 / iterations)} rows`);
   
   return duration;
 }
 
 async function main() {
+  // Check for --custom-queries flag
+  const customQueriesOnly = process.argv.includes('--custom-queries');
+  
+  if (customQueriesOnly) {
+    console.log('=== JavaScript (Node.js) SQLite Benchmark - Custom Queries Only ===\n');
+    
+    const totalStart = Date.now();
+    
+    // Custom Queries Benchmark on existing database
+    console.log('Custom Queries (4 queries × 10 iterations on r18_25_11_04.sqlite)... ');
+    const customQueryTime = benchmarkCustomQuery('../r18_25_11_04.sqlite', 10);
+    console.log(`   Total: ${customQueryTime}ms`);
+    
+    const totalTime = Date.now() - totalStart;
+    
+    console.log('\n=== Results ===');
+    console.log(`Custom Query:    ${String(customQueryTime).padStart(8)}ms`);
+    console.log('─────────────────────────');
+    console.log(`Total Time:      ${String(totalTime).padStart(8)}ms`);
+    return;
+  }
+  
   console.log('=== JavaScript (Node.js) SQLite Benchmark ===\n');
   
   // Remove old database file if exists
@@ -244,10 +332,10 @@ async function main() {
   
   db.close();
   
-  // Custom Query Benchmark on existing database
-  console.log('\n7. Custom Query (10 iterations on r18_25_11_04.sqlite)... ');
+  // Custom Queries Benchmark on existing database
+  console.log('\n7. Custom Queries (4 queries × 10 iterations on r18_25_11_04.sqlite)... ');
   const customQueryTime = benchmarkCustomQuery('../r18_25_11_04.sqlite', 10);
-  console.log(`   ${customQueryTime}ms`);
+  console.log(`   Total: ${customQueryTime}ms`);
   
   const totalTime = Date.now() - totalStart;
   

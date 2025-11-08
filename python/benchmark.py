@@ -126,17 +126,16 @@ def benchmark_batch_delete(conn: sqlite3.Connection, count: int) -> float:
 
 
 def benchmark_custom_query(db_path: str, iterations: int) -> float:
-    """Performs custom complex query on existing database (1000 iterations).
-    Uses random LIMIT, OFFSET, and release_date values for realistic testing.
+    """Performs custom queries benchmark on existing database.
+    Tests 3 different query patterns: index page, DVD detail, and DVD relationships.
     """
     import random
-    
-    start = time.time()
     
     conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
     cursor = conn.cursor()
     
-    query_template = """
+    # Query 1: Index page query (listing with filters)
+    index_query = """
         SELECT DISTINCT derived_video.dvd_id, derived_video.jacket_full_url, derived_video.release_date 
         FROM derived_video 
         LEFT OUTER JOIN derived_video_actress ON derived_video_actress.content_id = derived_video.content_id 
@@ -158,30 +157,124 @@ def benchmark_custom_query(db_path: str, iterations: int) -> float:
         LIMIT ? OFFSET ?
     """
     
-    total_rows = 0
+    # Query 2: DVD detail page query
+    detail_query = """
+        SELECT derived_video.content_id, derived_video.dvd_id, derived_video.title_en, derived_video.title_ja, 
+               derived_video.comment_en, derived_video.comment_ja, derived_video.runtime_mins, derived_video.release_date, 
+               derived_video.sample_url, derived_video.maker_id, derived_video.label_id, derived_video.series_id, 
+               derived_video.jacket_full_url, derived_video.jacket_thumb_url, derived_video.gallery_full_first, 
+               derived_video.gallery_full_last, derived_video.gallery_thumb_first, derived_video.gallery_thumb_last, 
+               derived_video.site_id, derived_video.service_code 
+        FROM derived_video 
+        WHERE derived_video.dvd_id IS NOT NULL 
+        AND derived_video.dvd_id IS NOT '' 
+        AND derived_video.release_date IS NOT NULL 
+        AND derived_video.dvd_id = ?
+    """
+    
+    # Query 3: DVD relationships query (categories and actresses)
+    relationships_query = """
+        SELECT derived_video.content_id, derived_category.id AS cat_id, derived_category.name_en AS cat_name_en, 
+               derived_category.name_ja AS cat_name_ja, derived_actress.id AS act_id, derived_actress.name_romaji, 
+               derived_actress.name_kana, derived_actress.name_kanji, derived_actress.image_url AS act_image_url 
+        FROM derived_video 
+        LEFT OUTER JOIN derived_video_category ON derived_video_category.content_id = derived_video.content_id 
+        LEFT OUTER JOIN derived_category ON derived_category.id = derived_video_category.category_id 
+        LEFT OUTER JOIN derived_video_actress ON derived_video_actress.content_id = derived_video.content_id 
+        LEFT OUTER JOIN derived_actress ON derived_actress.id = derived_video_actress.actress_id 
+        WHERE derived_video.dvd_id = ?
+    """
+    
+    # Query 4: Similar DVDs (same year, random order)
+    similar_query = """
+        SELECT derived_video.dvd_id, derived_video.jacket_full_url, derived_video.release_date 
+        FROM derived_video, (SELECT derived_video.release_date AS release_date 
+                             FROM derived_video 
+                             WHERE derived_video.dvd_id = ?) AS anon_1 
+        WHERE CAST(STRFTIME('%Y', derived_video.release_date) AS INTEGER) = CAST(STRFTIME('%Y', anon_1.release_date) AS INTEGER) 
+        AND derived_video.dvd_id IS NOT NULL 
+        AND derived_video.dvd_id != '' 
+        AND derived_video.release_date IS NOT NULL 
+        AND derived_video.jacket_full_url IS NOT NULL 
+        ORDER BY random() 
+        LIMIT 6 OFFSET 0
+    """
+    
+    # Prepare statements (not directly supported in sqlite3, but we can reuse cursor)
+    # Python sqlite3 caches the last query, but explicit preparation helps
+    start = time.time()
+    
+    total_rows1 = 0
+    total_rows2 = 0
+    total_rows3 = 0
+    total_rows4 = 0
+    
     for _ in range(iterations):
-        # Generate random parameters
+        # Query 1: Index page with random parameters
         random_year = random.randint(2020, 2025)
         random_month = random.randint(1, 12)
         random_day = random.randint(1, 28)
         random_date = f"{random_year:04d}-{random_month:02d}-{random_day:02d}"
-        random_limit = random.randint(50, 199)  # 50-199
-        random_offset = random.randint(0, 4999)  # 0-4999
+        page_number = random.randint(0, 49)  # Random page 0-49
+        limit = 100
+        offset = page_number * 100
         
-        cursor.execute(query_template, (random_date, random_limit, random_offset))
-        rows = cursor.fetchall()
-        total_rows += len(rows)
+        cursor.execute(index_query, (random_date, limit, offset))
+        rows1 = cursor.fetchall()
+        total_rows1 += len(rows1)
+        
+        # Query 2, 3, 4: Use a random dvd_id from Query 1 results
+        if len(rows1) > 0:
+            random_dvd_id = random.choice(rows1)[0]  # Get dvd_id from first column
+            
+            cursor.execute(detail_query, (random_dvd_id,))
+            rows2 = cursor.fetchall()
+            total_rows2 += len(rows2)
+            
+            cursor.execute(relationships_query, (random_dvd_id,))
+            rows3 = cursor.fetchall()
+            total_rows3 += len(rows3)
+            
+            cursor.execute(similar_query, (random_dvd_id,))
+            rows4 = cursor.fetchall()
+            total_rows4 += len(rows4)
+    
+    duration = (time.time() - start) * 1000
     
     conn.close()
     
-    duration = (time.time() - start) * 1000
-    avg_rows = total_rows // iterations
-    print(f"  → Executed {iterations} times, avg {avg_rows} rows per query")
+    print(f"  → Query 1 (Index): {iterations} iterations, avg {total_rows1 // iterations} rows")
+    print(f"  → Query 2 (Detail): {iterations} iterations, avg {total_rows2 // iterations} rows")
+    print(f"  → Query 3 (Relations): {iterations} iterations, avg {total_rows3 // iterations} rows")
+    print(f"  → Query 4 (Similar): {iterations} iterations, avg {total_rows4 // iterations} rows")
     
     return duration
 
 
 def main():
+    import sys
+    
+    # Check for --custom-queries flag
+    custom_queries_only = "--custom-queries" in sys.argv
+    
+    if custom_queries_only:
+        print("=== Python SQLite Benchmark - Custom Queries Only ===\n")
+        
+        total_start = time.time()
+        
+        # Custom Queries Benchmark on existing database
+        print("Custom Queries (4 queries × 10 iterations on r18_25_11_04.sqlite)... ")
+        custom_query_time = benchmark_custom_query("../r18_25_11_04.sqlite", 10)
+        print(f"   Total: {custom_query_time:.0f}ms")
+        
+        total_time = (time.time() - total_start) * 1000
+        
+        print("\n=== Results ===")
+        print(f"Custom Query:    {custom_query_time:>8.0f}ms")
+        print("─────────────────────────")
+        print(f"Total Time:      {total_time:>8.0f}ms")
+        return
+    
     print("=== Python SQLite Benchmark ===\n")
     
     # Remove old database file if exists
@@ -225,10 +318,10 @@ def main():
     
     conn.close()
     
-    # Custom Query Benchmark on existing database
-    print("\n7. Custom Query (10 iterations on r18_25_11_04.sqlite)... ")
+    # Custom Queries Benchmark on existing database
+    print("\n7. Custom Queries (4 queries × 10 iterations on r18_25_11_04.sqlite)... ")
     custom_query_time = benchmark_custom_query("../r18_25_11_04.sqlite", 10)
-    print(f"   {custom_query_time:.0f}ms")
+    print(f"   Total: {custom_query_time:.0f}ms")
     
     total_time = (time.time() - total_start) * 1000
     
