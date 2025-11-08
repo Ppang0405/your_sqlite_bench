@@ -21,6 +21,13 @@ command_exists() {
     command -v "$1" >/dev/null 2>&1
 }
 
+# Add timestamp to each line of output
+add_timestamp() {
+    while IFS= read -r line; do
+        echo "[$(date '+%H:%M:%S')] $line"
+    done
+}
+
 # Run Rust benchmark
 run_rust() {
     echo -e "${BLUE}[1/4] Running Rust Benchmark...${NC}"
@@ -29,14 +36,14 @@ run_rust() {
         cd rust
         if [ ! -d "target/release" ]; then
             echo "Building Rust project (first time)..."
-            cargo build --release
+            cargo build --release 2>&1 | add_timestamp
             if [ $? -ne 0 ]; then
                 echo -e "${RED}Failed to build Rust project${NC}"
                 cd ..
                 return 1
             fi
         fi
-        cargo run --release --quiet
+        cargo run --release --quiet 2>&1 | add_timestamp
         cd ..
         echo ""
     else
@@ -53,14 +60,14 @@ run_go() {
         cd go
         if [ ! -f "go.sum" ]; then
             echo "Downloading Go dependencies..."
-            go mod download
+            go mod download 2>&1 | add_timestamp
             if [ $? -ne 0 ]; then
                 echo -e "${RED}Failed to download Go dependencies${NC}"
                 cd ..
                 return 1
             fi
         fi
-        go run main.go
+        go run main.go 2>&1 | add_timestamp
         cd ..
         echo ""
     else
@@ -75,12 +82,12 @@ run_python() {
     echo ""
     if command_exists python3; then
         cd python
-        python3 benchmark.py
+        python3 benchmark.py 2>&1 | add_timestamp
         cd ..
         echo ""
     elif command_exists python; then
         cd python
-        python benchmark.py
+        python benchmark.py 2>&1 | add_timestamp
         cd ..
         echo ""
     else
@@ -97,14 +104,14 @@ run_javascript() {
         cd javascript
         if [ ! -d "node_modules" ]; then
             echo "Installing Node.js dependencies..."
-            npm install --quiet
+            npm install --quiet 2>&1 | add_timestamp
             if [ $? -ne 0 ]; then
                 echo -e "${RED}Failed to install Node.js dependencies${NC}"
                 cd ..
                 return 1
             fi
         fi
-        node benchmark.js
+        node benchmark.js 2>&1 | add_timestamp
         cd ..
         echo ""
     else

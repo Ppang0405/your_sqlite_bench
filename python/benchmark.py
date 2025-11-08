@@ -125,6 +125,62 @@ def benchmark_batch_delete(conn: sqlite3.Connection, count: int) -> float:
     return (time.time() - start) * 1000
 
 
+def benchmark_custom_query(db_path: str, iterations: int) -> float:
+    """Performs custom complex query on existing database (1000 iterations).
+    Uses random LIMIT, OFFSET, and release_date values for realistic testing.
+    """
+    import random
+    
+    start = time.time()
+    
+    conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    cursor = conn.cursor()
+    
+    query_template = """
+        SELECT DISTINCT derived_video.dvd_id, derived_video.jacket_full_url, derived_video.release_date 
+        FROM derived_video 
+        LEFT OUTER JOIN derived_video_actress ON derived_video_actress.content_id = derived_video.content_id 
+        LEFT OUTER JOIN derived_actress ON derived_actress.id = derived_video_actress.actress_id 
+        LEFT OUTER JOIN derived_video_category ON derived_video_category.content_id = derived_video.content_id 
+        LEFT OUTER JOIN derived_category ON derived_category.id = derived_video_category.category_id 
+        WHERE derived_video.dvd_id IS NOT NULL 
+        AND derived_video.dvd_id IS NOT '' 
+        AND derived_video.release_date IS NOT NULL 
+        AND derived_video.release_date <= ? 
+        AND derived_video.jacket_full_url IS NOT NULL 
+        AND (lower(derived_video.dvd_id) LIKE lower('%%') 
+             OR lower(derived_actress.name_romaji) LIKE lower('%%') 
+             OR lower(derived_actress.name_kanji) LIKE lower('%%') 
+             OR lower(derived_actress.name_kana) LIKE lower('%%') 
+             OR lower(derived_category.name_en) LIKE lower('%%') 
+             OR lower(derived_category.name_ja) LIKE lower('%%')) 
+        ORDER BY derived_video.release_date DESC
+        LIMIT ? OFFSET ?
+    """
+    
+    total_rows = 0
+    for _ in range(iterations):
+        # Generate random parameters
+        random_year = random.randint(2020, 2025)
+        random_month = random.randint(1, 12)
+        random_day = random.randint(1, 28)
+        random_date = f"{random_year:04d}-{random_month:02d}-{random_day:02d}"
+        random_limit = random.randint(50, 199)  # 50-199
+        random_offset = random.randint(0, 4999)  # 0-4999
+        
+        cursor.execute(query_template, (random_date, random_limit, random_offset))
+        rows = cursor.fetchall()
+        total_rows += len(rows)
+    
+    conn.close()
+    
+    duration = (time.time() - start) * 1000
+    avg_rows = total_rows // iterations
+    print(f"  → Executed {iterations} times, avg {avg_rows} rows per query")
+    
+    return duration
+
+
 def main():
     print("=== Python SQLite Benchmark ===\n")
     
@@ -167,9 +223,14 @@ def main():
     batch_delete_time = benchmark_batch_delete(conn, 5_000)
     print(f"{batch_delete_time:.0f}ms")
     
-    total_time = (time.time() - total_start) * 1000
-    
     conn.close()
+    
+    # Custom Query Benchmark on existing database
+    print("\n7. Custom Query (10 iterations on r18_25_11_04.sqlite)... ")
+    custom_query_time = benchmark_custom_query("../r18_25_11_04.sqlite", 10)
+    print(f"   {custom_query_time:.0f}ms")
+    
+    total_time = (time.time() - total_start) * 1000
     
     print("\n=== Results ===")
     print(f"Batch Insert:    {batch_insert_time:>8.0f}ms")
@@ -178,6 +239,7 @@ def main():
     print(f"Complex Select:  {complex_select_time:>8.0f}ms")
     print(f"Batch Update:    {batch_update_time:>8.0f}ms")
     print(f"Batch Delete:    {batch_delete_time:>8.0f}ms")
+    print(f"Custom Query:    {custom_query_time:>8.0f}ms")
     print("─────────────────────────")
     print(f"Total Time:      {total_time:>8.0f}ms")
 

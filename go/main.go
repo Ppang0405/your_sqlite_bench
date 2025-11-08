@@ -192,6 +192,78 @@ func benchmarkBatchDelete(db *sql.DB, count int) (int64, error) {
 	return time.Since(start).Milliseconds(), nil
 }
 
+// benchmarkCustomQuery performs custom complex query on existing database (1000 iterations)
+// Uses random LIMIT, OFFSET, and release_date values for realistic testing
+func benchmarkCustomQuery(dbPath string, iterations int) (int64, error) {
+	start := time.Now()
+
+	db, err := sql.Open("sqlite3", dbPath+"?mode=ro")
+	if err != nil {
+		return 0, err
+	}
+	defer db.Close()
+
+	queryTemplate := `
+		SELECT DISTINCT derived_video.dvd_id, derived_video.jacket_full_url, derived_video.release_date 
+		FROM derived_video 
+		LEFT OUTER JOIN derived_video_actress ON derived_video_actress.content_id = derived_video.content_id 
+		LEFT OUTER JOIN derived_actress ON derived_actress.id = derived_video_actress.actress_id 
+		LEFT OUTER JOIN derived_video_category ON derived_video_category.content_id = derived_video.content_id 
+		LEFT OUTER JOIN derived_category ON derived_category.id = derived_video_category.category_id 
+		WHERE derived_video.dvd_id IS NOT NULL 
+		AND derived_video.dvd_id IS NOT '' 
+		AND derived_video.release_date IS NOT NULL 
+		AND derived_video.release_date <= ? 
+		AND derived_video.jacket_full_url IS NOT NULL 
+		AND (lower(derived_video.dvd_id) LIKE lower('%%') 
+			 OR lower(derived_actress.name_romaji) LIKE lower('%%') 
+			 OR lower(derived_actress.name_kanji) LIKE lower('%%') 
+			 OR lower(derived_actress.name_kana) LIKE lower('%%') 
+			 OR lower(derived_category.name_en) LIKE lower('%%') 
+			 OR lower(derived_category.name_ja) LIKE lower('%%')) 
+		ORDER BY derived_video.release_date DESC
+		LIMIT ? OFFSET ?
+	`
+
+	var totalRows int
+	for i := 0; i < iterations; i++ {
+		// Generate random parameters
+		randomYear := 2020 + (i % 6)                                  // 2020-2025
+		randomMonth := 1 + (i*7 % 12)                                 // 1-12
+		randomDay := 1 + (i*11 % 28)                                  // 1-28
+		randomDate := fmt.Sprintf("%d-%02d-%02d", randomYear, randomMonth, randomDay)
+		randomLimit := 50 + (i*13 % 150)  // 50-199
+		randomOffset := (i * 37) % 5000   // 0-4999
+
+		rows, err := db.Query(queryTemplate, randomDate, randomLimit, randomOffset)
+		if err != nil {
+			return 0, err
+		}
+
+		count := 0
+		for rows.Next() {
+			var dvdID, jacketURL, releaseDate sql.NullString
+			if err := rows.Scan(&dvdID, &jacketURL, &releaseDate); err != nil {
+				rows.Close()
+				return 0, err
+			}
+			count++
+		}
+		rows.Close()
+
+		if err := rows.Err(); err != nil {
+			return 0, err
+		}
+		totalRows += count
+	}
+
+	duration := time.Since(start).Milliseconds()
+	avgRows := totalRows / iterations
+	fmt.Printf("  → Executed %d times, avg %d rows per query\n", iterations, avgRows)
+
+	return duration, nil
+}
+
 func main() {
 	fmt.Println("=== Go SQLite Benchmark ===\n")
 
@@ -258,6 +330,14 @@ func main() {
 	}
 	fmt.Printf("%dms\n", batchDeleteTime)
 
+	// Custom Query Benchmark on existing database
+	fmt.Println("\n7. Custom Query (10 iterations on r18_25_11_04.sqlite)... ")
+	customQueryTime, err := benchmarkCustomQuery("../r18_25_11_04.sqlite", 10)
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Printf("   %dms\n", customQueryTime)
+
 	totalTime := time.Since(totalStart).Milliseconds()
 
 	fmt.Println("\n=== Results ===")
@@ -267,6 +347,7 @@ func main() {
 	fmt.Printf("Complex Select:  %8dms\n", complexSelectTime)
 	fmt.Printf("Batch Update:    %8dms\n", batchUpdateTime)
 	fmt.Printf("Batch Delete:    %8dms\n", batchDeleteTime)
+	fmt.Printf("Custom Query:    %8dms\n", customQueryTime)
 	fmt.Println("─────────────────────────")
 	fmt.Printf("Total Time:      %8dms\n", totalTime)
 }
