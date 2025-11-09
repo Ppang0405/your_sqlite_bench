@@ -40,7 +40,7 @@ add_timestamp() {
 
 # Run Rust benchmark
 run_rust() {
-    echo -e "${BLUE}[1/4] Running Rust Benchmark...${NC}"
+    echo -e "${BLUE}[1/5] Running Rust Benchmark...${NC}"
     echo ""
     if command_exists cargo; then
         cd rust
@@ -68,7 +68,7 @@ run_rust() {
 
 # Run Go benchmark
 run_go() {
-    echo -e "${BLUE}[2/4] Running Go Benchmark...${NC}"
+    echo -e "${BLUE}[2/5] Running Go Benchmark...${NC}"
     echo ""
     if command_exists go; then
         cd go
@@ -96,7 +96,7 @@ run_go() {
 
 # Run Python benchmark
 run_python() {
-    echo -e "${BLUE}[3/4] Running Python Benchmark...${NC}"
+    echo -e "${BLUE}[3/5] Running Python Benchmark...${NC}"
     echo ""
     if command_exists python3; then
         cd python
@@ -124,7 +124,7 @@ run_python() {
 
 # Run JavaScript benchmark
 run_javascript() {
-    echo -e "${BLUE}[4/4] Running JavaScript (Node.js) Benchmark...${NC}"
+    echo -e "${BLUE}[4/5] Running JavaScript (Node.js) Benchmark...${NC}"
     echo ""
     if command_exists node; then
         cd javascript
@@ -150,6 +150,34 @@ run_javascript() {
     fi
 }
 
+# Run TypeScript (Bun) benchmark
+run_typescript() {
+    echo -e "${BLUE}[5/5] Running TypeScript (Bun) Benchmark...${NC}"
+    echo ""
+    if command_exists bun; then
+        cd typescript
+        if [ ! -d "node_modules" ]; then
+            echo "Installing Bun dependencies..."
+            bun install --quiet 2>&1 | add_timestamp
+            if [ $? -ne 0 ]; then
+                echo -e "${RED}Failed to install Bun dependencies${NC}"
+                cd ..
+                return 1
+            fi
+        fi
+        if [ "$CUSTOM_QUERIES_ONLY" = true ]; then
+            bun benchmark.ts --custom-queries 2>&1 | add_timestamp
+        else
+            bun benchmark.ts 2>&1 | add_timestamp
+        fi
+        cd ..
+        echo ""
+    else
+        echo -e "${RED}Bun not found. Please install from https://bun.sh${NC}"
+        echo ""
+    fi
+}
+
 # Main execution
 main() {
     # Store the original directory
@@ -160,6 +188,7 @@ main() {
     run_go
     run_python
     run_javascript
+    run_typescript
     
     echo "=============================================="
     echo -e "${GREEN}  All benchmarks completed!${NC}"

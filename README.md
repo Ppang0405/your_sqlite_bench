@@ -1,6 +1,6 @@
 # SQLite Performance Benchmark
 
-Cross-language SQLite performance comparison for **Rust**, **Go**, **Python**, and **JavaScript** (Node.js).
+Cross-language SQLite performance comparison for **Rust**, **Go**, **Python**, **JavaScript** (Node.js), and **TypeScript** (Bun).
 
 ## Quick Start
 
@@ -39,6 +39,7 @@ Install at least one:
 - **Go**: https://go.dev/dl/
 - **Python**: 3.8+ (usually pre-installed)
 - **Node.js**: https://nodejs.org/
+- **Bun**: https://bun.sh (for TypeScript version)
 
 ## Run Individual Benchmarks
 
@@ -52,8 +53,11 @@ cd go && go run main.go
 # Python
 cd python && python3 benchmark.py
 
-# JavaScript
+# JavaScript (Node.js)
 cd javascript && node benchmark.js
+
+# TypeScript (Bun)
+cd typescript && bun benchmark.ts
 ```
 
 ## Documentation
@@ -68,6 +72,7 @@ cd javascript && node benchmark.js
 - **Go**: `mattn/go-sqlite3` (CGO binding)
 - **Python**: `sqlite3` (built-in)
 - **JavaScript**: `better-sqlite3` (native binding)
+- **TypeScript**: `bun:sqlite` (Bun's built-in SQLite module)
 
 ## Key Findings
 

@@ -1,0 +1,17 @@
+{
+  "name": "sqlite-bench-bun",
+  "version": "1.0.0",
+  "description": "SQLite benchmark for Bun runtime",
+  "main": "benchmark.ts",
+  "type": "module",
+  "scripts": {
+    "start": "bun benchmark.ts"
+  },
+  "keywords": ["sqlite", "benchmark", "bun"],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "bun-types": "latest"
+  }
+}
+
