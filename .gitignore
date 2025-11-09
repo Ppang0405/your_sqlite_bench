@@ -23,6 +23,7 @@ python/build/
 
 # JavaScript/Node.js
 javascript/node_modules/
+typescript/node_modules/
 # Note: package-lock.json should be committed for consistent installs
 
 # IDE & Editors
